@@ -4,6 +4,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.os.Build
+import android.provider.Settings
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -131,19 +134,15 @@ class SosMeshDatabase private constructor(context: Context) :
     private val _logsFlow = MutableStateFlow<List<MeshLogEntity>>(emptyList())
     val logsFlow: StateFlow<List<MeshLogEntity>> = _logsFlow.asStateFlow()
 
+    private val appContext = context.applicationContext
+
     private val _profileFlow = MutableStateFlow(
-        UserProfileEntity(
-            userId = "NODE-HUAN-01",
-            displayName = "Nguyễn Minh Huấn",
-            phoneNumber = "0987654321",
-            activeMode = "CITIZEN",
-            batterySaverEnabled = false
-        )
+        createInitialDeviceProfile(appContext)
     )
     val profileFlow: StateFlow<UserProfileEntity> = _profileFlow.asStateFlow()
 
     init {
-        seedInitialDataIfNeeded()
+        ensureInitialProfilePersisted()
         refreshFlows()
     }
 
@@ -204,138 +203,13 @@ class SosMeshDatabase private constructor(context: Context) :
         onCreate(db)
     }
 
-    private fun seedInitialDataIfNeeded() {
-        val existing = getAllMessages()
-        if (existing.isNotEmpty()) return
-        val now = System.currentTimeMillis()
-        upsertMessage(
-            MeshMessageEntity(
-                id = "SOS-20261103-101",
-                type = "SOS",
-                senderId = "DEV04-REDMI-NOTE7",
-                senderName = "Hộ dân Nguyễn Văn An (Tập thể Kim Liên)",
-                latitude = 21.0075,
-                longitude = 105.8342,
-                peopleCount = 4,
-                conditionSummary = "Ngập sâu tầng 1, có 1 người già cần thuốc tim mạch",
-                urgencyLevel = "CRITICAL",
-                content = "Cần xuồng cứu hộ tiếp cận gấp tại ngõ 4 Phương Mai",
-                signature = null,
-                ttl = 3,
-                hopCount = 2,
-                status = "DELIVERED",
-                createdAt = now - 420_000L,
-                updatedAt = now - 300_000L
-            )
-        )
-        upsertMessage(
-            MeshMessageEntity(
-                id = "SOS-20261103-102",
-                type = "SOS",
-                senderId = "DEV03-REDMI-K50",
-                senderName = "Nhóm SV Tình nguyện (ĐH Thủy Lợi)",
-                latitude = 21.0068,
-                longitude = 105.8248,
-                peopleCount = 6,
-                conditionSummary = "Mắc kẹt do cây đổ & mất điện diện rộng, thiếu nước sạch",
-                urgencyLevel = "HIGH",
-                content = "Đã gom 6 người dân lên tầng 2 nhà K1, chờ đội ứng cứu",
-                signature = null,
-                ttl = 4,
-                hopCount = 1,
-                status = "APPROACHING",
-                createdAt = now - 240_000L,
-                updatedAt = now - 120_000L
-            )
-        )
-        upsertMessage(
-            MeshMessageEntity(
-                id = "ALERT-20261103-01",
-                type = "ALERT",
-                senderId = "DEV02-ONEPLUS-PAD2PRO",
-                senderName = "Ban Chỉ huy PCTT & TKCN Phường Trung Liệt",
-                latitude = 21.0102,
-                longitude = 105.8265,
-                peopleCount = 0,
-                conditionSummary = "CẢNH BÁO MỨC ĐỘ 3: Nước dâng cao & cắt điện khu vực trũng",
-                urgencyLevel = "CRITICAL",
-                content = "Yêu cầu người dân di chuyển lên tầng 2+, bật Bluetooth/Wi-Fi để duy trì mạng SOS Mesh.",
-                signature = "SIG-TLU-OFFICIAL-9F4A2C",
-                ttl = 5,
-                hopCount = 2,
-                status = "DELIVERED",
-                createdAt = now - 600_000L,
-                updatedAt = now - 600_000L
-            )
-        )
-        upsertMessage(
-            MeshMessageEntity(
-                id = "CHAT-20261103-01",
-                type = "CHAT",
-                senderId = "DEV03-REDMI-K50",
-                senderName = "Nút trung gian Redmi K50 (Cách 45m)",
-                latitude = 21.0080,
-                longitude = 105.8255,
-                peopleCount = 2,
-                conditionSummary = "Nút chuyển tiếp ổn định",
-                urgencyLevel = "MEDIUM",
-                content = "Tầng 3 nhà A4 vẫn còn sạc dự phòng và nước uống, bà con lân cận có thể sang tránh trú.",
-                signature = null,
-                ttl = 2,
-                hopCount = 1,
-                status = "DELIVERED",
-                createdAt = now - 180_000L,
-                updatedAt = now - 180_000L
-            )
-        )
-        upsertPeer(
-            EncounteredPeerEntity(
-                endpointId = "NEARBY-K50-8A1F",
-                deviceName = "Redmi K50 (Nút trung gian Relay)",
-                androidApi = 34,
-                supportsBle = true,
-                supportsWifiDirect = true,
-                lastRssi = -58,
-                exchangedPackets = 12,
-                lastSeenAt = now - 25_000L
-            )
-        )
-        upsertPeer(
-            EncounteredPeerEntity(
-                endpointId = "NEARBY-NOTE7-3C9B",
-                deviceName = "Redmi Note 7 (Máy Người dân)",
-                androidApi = 34,
-                supportsBle = true,
-                supportsWifiDirect = true,
-                lastRssi = -69,
-                exchangedPackets = 7,
-                lastSeenAt = now - 65_000L
-            )
-        )
-        upsertPeer(
-            EncounteredPeerEntity(
-                endpointId = "NEARBY-TURBO4PRO-GW",
-                deviceName = "Redmi Turbo 4 Pro (Máy Cứu hộ / Nút Cổng #1)",
-                androidApi = 35,
-                supportsBle = true,
-                supportsWifiDirect = true,
-                lastRssi = -62,
-                exchangedPackets = 19,
-                lastSeenAt = now - 15_000L
-            )
-        )
-        insertLog(
-            MeshLogEntity(
-                packetId = "SOS-20261103-101",
-                packetType = "SOS",
-                event = "RECEIVED_MULTI_HOP",
-                hopCount = 2,
-                latencyMs = 1840L,
-                batteryPct = 86,
-                scanCycleMs = 15_000L,
-                timestamp = now - 300_000L
-            )
-        )
+    private fun ensureInitialProfilePersisted() {
+        val hasStoredProfile = readableDatabase.rawQuery("SELECT COUNT(*) FROM user_profile", null).use { c ->
+            c.moveToFirst() && c.getInt(0) > 0
+        }
+        if (!hasStoredProfile) {
+            saveProfile(createInitialDeviceProfile(appContext))
+        }
     }
 
     fun refreshFlows() {
@@ -524,6 +398,41 @@ class SosMeshDatabase private constructor(context: Context) :
     companion object {
         private const val DB_NAME = "sos_mesh_v1.db"
         private const val DB_VERSION = 1
+        private const val PREFS_NAME = "sos_mesh_node_identity"
+        private const val KEY_NODE_ID = "node_id"
+
+        fun createInitialDeviceProfile(context: Context): UserProfileEntity {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            var nodeId = prefs.getString(KEY_NODE_ID, null)
+            if (nodeId.isNullOrBlank()) {
+                val androidId = runCatching {
+                    Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                val suffix = (androidId ?: UUID.randomUUID().toString().replace("-", ""))
+                    .takeLast(8)
+                    .uppercase(Locale.US)
+                nodeId = "NODE-$suffix"
+                prefs.edit().putString(KEY_NODE_ID, nodeId).apply()
+            }
+            val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+            val model = Build.MODEL?.trim().orEmpty()
+            val deviceLabel = listOf(manufacturer, model)
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+                .ifBlank { "Android API ${Build.VERSION.SDK_INT}" }
+            val defaultMode = if (context.packageName.contains("rescue", ignoreCase = true)) {
+                "RESCUE"
+            } else {
+                "CITIZEN"
+            }
+            return UserProfileEntity(
+                userId = nodeId,
+                displayName = "$deviceLabel ($nodeId)",
+                phoneNumber = "",
+                activeMode = defaultMode,
+                batterySaverEnabled = false
+            )
+        }
 
         @Volatile
         private var instance: SosMeshDatabase? = null
