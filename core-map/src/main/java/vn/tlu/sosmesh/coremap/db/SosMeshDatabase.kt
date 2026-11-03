@@ -255,7 +255,22 @@ abstract class SosMeshDatabase : RoomDatabase() {
 
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE logs ADD COLUMN origin TEXT NOT NULL DEFAULT ''")
+                db.execSQL("DROP TABLE IF EXISTS `messages`")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `messages` (`id` TEXT NOT NULL, `type` TEXT NOT NULL, `sender_id` TEXT NOT NULL, `sender_name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `people_count` INTEGER NOT NULL, `condition_summary` TEXT NOT NULL, `urgency_level` TEXT NOT NULL, `content` TEXT NOT NULL, `signature` TEXT, `ttl` INTEGER NOT NULL, `hop_count` INTEGER NOT NULL, `status` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `peers`")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `peers` (`endpoint_id` TEXT NOT NULL, `device_name` TEXT NOT NULL, `android_api` INTEGER NOT NULL, `supports_ble` INTEGER NOT NULL, `supports_wifi_direct` INTEGER NOT NULL, `last_rssi` INTEGER NOT NULL, `exchanged_packets` INTEGER NOT NULL, `last_seen_at` INTEGER NOT NULL, PRIMARY KEY(`endpoint_id`))"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `logs`")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `logs` (`log_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `packet_id` TEXT NOT NULL, `packet_type` TEXT NOT NULL, `origin` TEXT NOT NULL DEFAULT '', `event` TEXT NOT NULL, `hop_count` INTEGER NOT NULL, `latency_ms` INTEGER NOT NULL, `battery_pct` INTEGER NOT NULL, `scan_cycle_ms` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL)"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `user_profile`")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `user_profile` (`user_id` TEXT NOT NULL, `display_name` TEXT NOT NULL, `phone_number` TEXT NOT NULL, `active_mode` TEXT NOT NULL, `battery_saver_enabled` INTEGER NOT NULL, PRIMARY KEY(`user_id`))"
+                )
             }
         }
 
@@ -303,7 +318,7 @@ abstract class SosMeshDatabase : RoomDatabase() {
                     DB_NAME
                 )
                     .addMigrations(MIGRATION_1_2)
-                    .fallbackToDestructiveMigrationOnDowngrade()
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { db ->
                         instance = db

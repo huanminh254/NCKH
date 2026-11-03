@@ -19,16 +19,16 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingTop="8dp"
+        android:paddingTop="6dp"
         android:text="Bản đồ online/offline (MapLibre + MBTiles)"
-        android:textSize="13sp" />
+        android:textSize="12sp" />
 
     <TextView
         android:id="@+id/locationStatusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingTop="4dp"
+        android:paddingTop="2dp"
         android:text="Định vị: Đang lấy tọa độ GPS (Fused Location)..."
         android:textSize="13sp"
         android:textStyle="bold" />
@@ -46,16 +46,41 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingBottom="6dp"
+        android:paddingBottom="4dp"
         android:text="Địa chỉ: đang chờ tọa độ"
         android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/meshStatusBannerText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#ECEFF1"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:text="Trạng thái Mesh P2P_CLUSTER: Đang khởi tạo..."
+        android:textColor="#1A237E"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <Button
+        android:id="@+id/primaryActionButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginTop="4dp"
+        android:backgroundTint="#D32F2F"
+        android:paddingVertical="10dp"
+        android:text="GỬI SOS MỘT CHẠM (≤ 3 THAO TÁC)"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:paddingHorizontal="8dp"
-        android:paddingBottom="6dp">
+        android:paddingBottom="2dp">
 
         <Button
             android:id="@+id/refreshLocationButton"
@@ -63,7 +88,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Làm mới GPS"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
 
         <Button
             android:id="@+id/downloadOfflineButton"
@@ -71,7 +96,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Tải bản đồ offline"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
 
         <Button
             android:id="@+id/reloadMapButton"
@@ -79,7 +104,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Tải lại bản đồ"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
     </LinearLayout>
 
     <org.maplibre.android.maps.MapView
@@ -87,4 +112,37 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FAFAFA"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp">
+
+        <Button
+            android:id="@+id/alertButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Cảnh báo ALERT"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/chatButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Nhắn tin CHAT"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/safetyGuideButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="An toàn Offline"
+            android:textSize="11sp" />
+    </LinearLayout>
 </LinearLayout>
