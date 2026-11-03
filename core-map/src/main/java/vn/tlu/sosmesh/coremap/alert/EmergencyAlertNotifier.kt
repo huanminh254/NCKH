@@ -10,10 +10,19 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import vn.tlu.sosmesh.coremap.db.MeshMessageEntity
 
 object EmergencyAlertNotifier {
     private const val ALERT_CHANNEL_ID = "sos_mesh_critical_alert"
     private val SOS_VIBRATION_PATTERN = longArrayOf(0, 350, 150, 350, 150, 350, 350, 700, 200, 700)
+
+    fun notifyCriticalAlert(context: Context, alert: MeshMessageEntity) {
+        triggerLoudAlert(
+            context = context,
+            title = alert.conditionSummary.ifBlank { "CẢNH BÁO THIÊN TAI (${alert.urgencyLevel})" },
+            message = alert.content
+        )
+    }
 
     fun triggerLoudAlert(context: Context, title: String, message: String) {
         vibrateSosPattern(context)
