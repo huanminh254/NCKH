@@ -33,8 +33,13 @@ dependencies {
     api("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     api("org.maplibre.gl:android-sdk:11.11.0")
     api("com.google.android.gms:play-services-location:21.3.0")
+    api("com.google.android.gms:play-services-nearby:19.3.0")
     api("androidx.room:room-runtime:$roomVersion")
     api("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+    api(platform("com.google.firebase:firebase-bom:33.5.1"))
+    api("com.google.firebase:firebase-firestore-ktx")
+    api("com.google.firebase:firebase-database-ktx")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
