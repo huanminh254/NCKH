@@ -4,17 +4,19 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
 import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -22,7 +24,9 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.maplibre.android.annotations.Marker
@@ -32,85 +36,298 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import vn.tlu.sosmesh.coremap.MapActivity
 import vn.tlu.sosmesh.coremap.R as CoreMapR
+import vn.tlu.sosmesh.coremap.db.MeshMessageEntity
+import vn.tlu.sosmesh.coremap.db.SosMeshDatabase
+import vn.tlu.sosmesh.coremap.mesh.MeshQueueEngine
+import vn.tlu.sosmesh.coremap.service.MeshForegroundService
+import vn.tlu.sosmesh.coremap.service.MeshPermissionHelper
+import vn.tlu.sosmesh.coremap.ui.MeshFeatureDialogs
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 
 class MainActivity : MapActivity() {
     private lateinit var locationStatusText: TextView
     private lateinit var coordinatesText: TextView
     private lateinit var addressText: TextView
+    private lateinit var meshStatusBannerText: TextView
+    private lateinit var database: SosMeshDatabase
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private lateinit var locationManager: LocationManager
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(this) }
+    private val locationManager by lazy { getSystemService(Context.LOCATION_SERVICE) as LocationManager }
 
     private var locationMarker: Marker? = null
-    private var currentLocation: Location? = null
-    private var latestFreshGps: Location? = null
+    private val sosMarkers = mutableMapOf<Marker, MeshMessageEntity>()
+    private var latestLocation: Location? = null
     private var lastCenteredPosition: LatLng? = null
-    private var satellitesUsedInFix = 0
-    private var addressJob: Job? = null
     private var lastGeocodedLocation: Location? = null
+    private var addressJob: Job? = null
+    private var satellitesUsedInFix: Int = 0
+    private var latestMessages: List<MeshMessageEntity> = emptyList()
 
     private val gnssCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
-            satellitesUsedInFix = (0 until status.satelliteCount).count(status::usedInFix)
-        }
-    }
-
-    private val gpsListener = object : LocationListener {
-        override fun onLocationChanged(location: Location) {
-            if (abs(System.currentTimeMillis() - location.time) <= 30_000L) {
-                latestFreshGps = location
+            var used = 0
+            for (i in 0 until status.satelliteCount) {
+                if (status.usedInFix(i)) used++
             }
-            renderLocation(location)
+            satellitesUsedInFix = used
         }
-    }
-
-    private val systemFusedListener = LocationListener { location ->
-        renderLocation(location)
     }
 
     private val fusedCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            val loc = result.lastLocation ?: return
-            val freshGps = latestFreshGps
-            if (freshGps != null &&
-                abs(System.currentTimeMillis() - freshGps.time) <= 10_000L &&
-                freshGps.hasAccuracy() &&
-                (!loc.hasAccuracy() || freshGps.accuracy < loc.accuracy)
-            ) {
-                renderLocation(freshGps)
-                return
-            }
-            renderLocation(loc)
+            val location = result.lastLocation ?: return
+            onNewLocation(location)
         }
     }
 
+    private val systemFusedListener = LocationListener { location -> onNewLocation(location) }
+    private val gpsListener = LocationListener { location -> onNewLocation(location) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        intent.putExtra(EXTRA_ROLE, "SOS Mesh · Đội cứu hộ")
+        intent.putExtra(EXTRA_ROLE, "SOS Mesh · Đội Cứu Hộ")
         super.onCreate(savedInstanceState)
 
-        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        database = SosMeshDatabase.getInstance(applicationContext)
         locationStatusText = findViewById(CoreMapR.id.locationStatusText)
         coordinatesText = findViewById(CoreMapR.id.coordinatesText)
         addressText = findViewById(CoreMapR.id.addressText)
+        meshStatusBannerText = findViewById(CoreMapR.id.meshStatusBannerText)
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val profile = database.getOrCreateProfile(applicationContext)
+            if (profile.activeMode != "RESCUE") {
+                database.userProfileDao().saveProfile(profile.copy(activeMode = "RESCUE"))
+            }
+        }
 
         findViewById<Button>(CoreMapR.id.refreshLocationButton).setOnClickListener {
             lastCenteredPosition = null
-            startLocationOrRequestPermission()
+            ensurePermissionAndStartLocation()
         }
 
-        startLocationOrRequestPermission()
+        val dispatchBtn = findViewById<Button>(CoreMapR.id.primaryActionButton)
+        dispatchBtn.text = "DANH SÁCH ƯU TIÊN SOS & PHẢN HỒI (ĐANG TỚI / ĐÃ TIẾP CẬN)"
+        dispatchBtn.setBackgroundColor(Color.parseColor("#E65100"))
+        dispatchBtn.setOnClickListener {
+            openRescueDispatchSheet()
+        }
+
+        findViewById<Button>(CoreMapR.id.alertButton).setOnClickListener {
+            showCommanderOfficialAlertDialog(
+                latitude = latestLocation?.latitude ?: 21.0075,
+                longitude = latestLocation?.longitude ?: 105.8248
+            )
+        }
+
+        findViewById<Button>(CoreMapR.id.chatButton).setOnClickListener {
+            MeshFeatureDialogs.showNearbyChatDialog(
+                activity = this,
+                scope = lifecycleScope,
+                database = database,
+                latitude = latestLocation?.latitude ?: 21.0075,
+                longitude = latestLocation?.longitude ?: 105.8248
+            )
+        }
+
+        findViewById<Button>(CoreMapR.id.safetyGuideButton).setOnClickListener {
+            MeshFeatureDialogs.showSafetyGuideDialog(
+                activity = this,
+                scope = lifecycleScope,
+                database = database
+            )
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                combine(database.messagesFlow, database.peersFlow) { messages, peers ->
+                    messages to peers
+                }.collect { (messages, peers) ->
+                    latestMessages = messages
+                    updateRescueBannerAndMarkers(messages, peers.size)
+                }
+            }
+        }
+
+        MeshPermissionHelper.requestMissingPermissions(this)
+        ensurePermissionAndStartLocation()
+        if (hasLocationPermission()) {
+            MeshForegroundService.startOrRefresh(applicationContext)
+        }
+    }
+
+
+    private fun showCommanderOfficialAlertDialog(latitude: Double, longitude: Double) {
+        lifecycleScope.launch {
+            val profile = withContext(Dispatchers.IO) {
+                database.getOrCreateProfile(applicationContext)
+            }
+            val keystorePubB64 = withContext(Dispatchers.IO) {
+                OfficialKeystoreSigner.ensureOfficialKeyPairAndTrust(applicationContext)
+            }
+            val alerts: List<MeshMessageEntity> = latestMessages.filter { it.type == "ALERT" }
+
+            val root = android.widget.LinearLayout(this@MainActivity).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(48, 32, 48, 16)
+            }
+
+            val keystoreInfo = TextView(this@MainActivity).apply {
+                text = "Chế độ Cán bộ Chỉ huy (Android Keystore ECDSA P-256 / SHA256withECDSA)\n" +
+                    "Khóa công khai thiết bị cán bộ (dùng để cấp quyền / Trust List):\n$keystorePubB64"
+                textSize = 11.5f
+                setTextIsSelectable(true)
+                setTextColor(Color.parseColor("#1B5E20"))
+            }
+            root.addView(keystoreInfo)
+
+            val summaryInput = android.widget.EditText(this@MainActivity).apply {
+                hint = "Tiêu đề cảnh báo khẩn cấp"
+                setText("CẢNH BÁO KHẨN CẤP: Lũ dâng cao & sơ tán khu vực trũng")
+            }
+            root.addView(summaryInput)
+
+            val contentInput = android.widget.EditText(this@MainActivity).apply {
+                hint = "Nội dung chỉ đạo chính thức"
+                setText("Đề nghị người dân di chuyển lên tầng cao, giữ kết nối Bluetooth/Wi-Fi để duy trì mạng SOS Mesh.")
+            }
+            root.addView(contentInput)
+
+            val historyText = TextView(this@MainActivity).apply {
+                setPadding(0, 16, 0, 0)
+                textSize = 12f
+                text = if (alerts.isEmpty()) {
+                    "Chưa có ALERT nào trong bộ nhớ."
+                } else {
+                    alerts.take(3).joinToString("\n\n") { alertItem ->
+                        val verified = vn.tlu.sosmesh.coremap.alert.AlertSignatureVerifier.verifyAlert(alertItem)
+                        "• [${if (verified) "CHỮ KÝ HỢP LỆ" else "KHÔNG HỢP LỆ"}] ${alertItem.conditionSummary}\n  ${alertItem.content}"
+                    }
+                }
+            }
+            root.addView(historyText)
+
+            android.app.AlertDialog.Builder(this@MainActivity)
+                .setTitle("Phát Cảnh báo Cán bộ (Ký số Android Keystore)")
+                .setView(root)
+                .setPositiveButton("KÝ ECDSA & PHÁT ALERT") { _, _ ->
+                    val summary = summaryInput.text?.toString()?.trim().orEmpty()
+                        .ifEmpty { "CẢNH BÁO KHẨN CẤP" }
+                    val content = contentInput.text?.toString()?.trim().orEmpty()
+                        .ifEmpty { "Cảnh báo sơ tán khẩn cấp" }
+                    val now = System.currentTimeMillis()
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val unsigned = MeshMessageEntity(
+                            id = "ALERT-${profile.userId}-$now",
+                            type = "ALERT",
+                            senderId = profile.userId,
+                            senderName = "Ban Chỉ huy PCTT (${profile.displayName})",
+                            latitude = latitude,
+                            longitude = longitude,
+                            peopleCount = 0,
+                            conditionSummary = summary,
+                            urgencyLevel = "CRITICAL",
+                            content = content,
+                            signature = null,
+                            ttl = 6,
+                            hopCount = 0,
+                            status = "DELIVERED",
+                            createdAt = now,
+                            updatedAt = now
+                        )
+                        val signed = OfficialKeystoreSigner.signOfficialAlert(applicationContext, unsigned)
+                        vn.tlu.sosmesh.coremap.alert.EmergencyAlertNotifier.notifyCriticalAlert(applicationContext, signed)
+                        MeshForegroundService.broadcastPacket(applicationContext, signed)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                "Đã ký ECDSA qua Android Keystore và phát ALERT!",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+                .setNeutralButton("Cấu hình Trust List") { _, _ ->
+                    MeshFeatureDialogs.showCitizenAlertViewerDialog(
+                        activity = this@MainActivity,
+                        scope = lifecycleScope,
+                        database = database
+                    )
+                }
+                .setNegativeButton("Đóng", null)
+                .show()
+        }
+    }
+
+    private fun openRescueDispatchSheet() {
+        val lat = latestLocation?.latitude ?: 21.0075
+        val lon = latestLocation?.longitude ?: 105.8248
+        MeshFeatureDialogs.showRescueDispatchDialog(
+            activity = this,
+            scope = lifecycleScope,
+            database = database,
+            rescueLat = lat,
+            rescueLon = lon
+        ) {
+            MeshForegroundService.startOrRefresh(applicationContext)
+        }
+    }
+
+    private fun updateRescueBannerAndMarkers(messages: List<MeshMessageEntity>, peerCount: Int) {
+        val rescueLat = latestLocation?.latitude ?: 21.0075
+        val rescueLon = latestLocation?.longitude ?: 105.8248
+        val sortedSos = MeshFeatureDialogs.sortSosForRescue(messages, rescueLat, rescueLon)
+        val topSos = sortedSos.firstOrNull()
+        meshStatusBannerText.text = if (topSos != null) {
+            val dist = MeshQueueEngine.haversineMeters(
+                rescueLat,
+                rescueLon,
+                topSos.latitude,
+                topSos.longitude
+            )
+            "Ưu tiên #1: [${topSos.urgencyLevel}] ${topSos.peopleCount} người · Cách ${String.format(Locale.US, "%.0f m", dist)} · Tổng SOS: ${sortedSos.size} · Nút: $peerCount"
+        } else {
+            "Đội Cứu Hộ sẵn sàng · Đang lắng nghe SOS qua P2P_CLUSTER · Nút đã gặp: $peerCount"
+        }
+        mapLibreMap?.let { renderRescueSosMarkers(it, sortedSos) }
+    }
+
+    private fun renderRescueSosMarkers(map: MapLibreMap, sortedSos: List<MeshMessageEntity>) {
+        sosMarkers.keys.forEach { map.removeMarker(it) }
+        sosMarkers.clear()
+        val rescueLat = latestLocation?.latitude ?: 21.0075
+        val rescueLon = latestLocation?.longitude ?: 105.8248
+        sortedSos.forEachIndexed { index, sos ->
+            val dist = MeshQueueEngine.haversineMeters(rescueLat, rescueLon, sos.latitude, sos.longitude)
+            val icon = MeshFeatureDialogs.createUrgencyMarkerIcon(this, sos.urgencyLevel, sos.status)
+            val marker = map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(sos.latitude, sos.longitude))
+                    .title("#${index + 1} [${sos.urgencyLevel}] ${sos.senderName} (${String.format(Locale.US, "%.0f m", dist)})")
+                    .snippet("${sos.peopleCount} người · ${sos.conditionSummary} · Trạng thái: ${sos.status}")
+                    .icon(icon)
+            )
+            sosMarkers[marker] = sos
+        }
+        map.setOnInfoWindowClickListener { marker ->
+            if (sosMarkers.containsKey(marker)) {
+                openRescueDispatchSheet()
+                true
+            } else {
+                false
+            }
+        }
     }
 
     override fun onMapReady(map: MapLibreMap) {
         locationMarker = null
-        currentLocation?.let { updateMapMarker(map, it, forceCenter = true) }
+        latestLocation?.let { updateMapMarker(map, it, forceCenter = true) }
+        val rescueLat = latestLocation?.latitude ?: 21.0075
+        val rescueLon = latestLocation?.longitude ?: 105.8248
+        renderRescueSosMarkers(map, MeshFeatureDialogs.sortSosForRescue(latestMessages, rescueLat, rescueLon))
     }
 
     override fun onRequestPermissionsResult(
@@ -119,64 +336,58 @@ class MainActivity : MapActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == LOCATION_PERMISSION_REQUEST &&
-            grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+        if (hasLocationPermission()) {
+            startLocationUpdates()
+            MeshForegroundService.startOrRefresh(applicationContext)
+        } else if (requestCode == LOCATION_PERMISSION_REQUEST ||
+            requestCode == MeshPermissionHelper.MESH_PERMISSION_REQUEST_CODE
         ) {
-            startFusedAndGpsUpdates()
-        } else if (requestCode == LOCATION_PERMISSION_REQUEST) {
-            locationStatusText.text = "Cần cấp quyền vị trí chính xác để dùng Fused Location / GPS"
+            locationStatusText.text = "Cần cấp quyền vị trí để định vị Fused Location / GPS"
         }
     }
 
-    private fun startLocationOrRequestPermission() {
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+    private fun hasLocationPermission(): Boolean {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED ||
             checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        ) {
-            startFusedAndGpsUpdates()
+    }
+
+    private fun ensurePermissionAndStartLocation() {
+        if (hasLocationPermission()) {
+            startLocationUpdates()
         } else {
             requestPermissions(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ),
+                MeshPermissionHelper.requiredPermissions(),
                 LOCATION_PERMISSION_REQUEST
             )
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun startFusedAndGpsUpdates() {
+    private fun startLocationUpdates() {
         stopLocationUpdates()
         locationStatusText.text = "Đang lấy tọa độ GPS (Fused Location)..."
 
-        val candidates = mutableListOf<Location>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching { locationManager.getLastKnownLocation(LocationManager.FUSED_PROVIDER) }
-                .getOrNull()?.let(candidates::add)
-        }
-        runCatching { locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) }
-            .getOrNull()?.let(candidates::add)
-        runCatching { locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) }
-            .getOrNull()?.let(candidates::add)
-        candidates.maxByOrNull { it.time }?.let(::renderLocation)
-
-        fusedClient.lastLocation.addOnSuccessListener { fusedLast ->
-            if (fusedLast != null && (currentLocation == null || fusedLast.time > (currentLocation?.time ?: 0L))) {
-                renderLocation(fusedLast)
-            }
+        runCatching {
+            locationManager.registerGnssStatusCallback(gnssCallback, android.os.Handler(Looper.getMainLooper()))
         }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_000L)
-            .setMinUpdateIntervalMillis(500L)
-            .setMinUpdateDistanceMeters(0f)
+        fusedClient.lastLocation.addOnSuccessListener { loc ->
+            if (loc != null && latestLocation == null) onNewLocation(loc)
+        }
+
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
+            .setMinUpdateIntervalMillis(1_000L)
             .setWaitForAccurateLocation(false)
             .build()
-        fusedClient.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper())
+
+        runCatching {
+            fusedClient.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper())
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)
+            locationManager.allProviders.contains(LocationManager.FUSED_PROVIDER)
         ) {
             runCatching {
                 locationManager.requestLocationUpdates(
@@ -189,36 +400,32 @@ class MainActivity : MapActivity() {
             }
         }
 
-        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            locationManager.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                1_000L,
-                0f,
-                gpsListener,
-                Looper.getMainLooper()
-            )
+        if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
             runCatching {
-                locationManager.registerGnssStatusCallback(gnssCallback, mainHandler)
+                locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    1_000L,
+                    0f,
+                    gpsListener,
+                    Looper.getMainLooper()
+                )
             }
         }
     }
 
-    private fun renderLocation(location: Location) {
-        val prev = currentLocation
-        if (prev != null) {
-            val prevAcc = if (prev.hasAccuracy()) prev.accuracy else Float.MAX_VALUE
-            val candAcc = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
-            if (candAcc > 35f && prevAcc <= 30f) return
+    private fun onNewLocation(location: Location) {
+        val current = latestLocation
+        if (current != null && location.time < current.time && location.accuracy >= current.accuracy) {
+            return
         }
-        currentLocation = location
-        val acc = if (location.hasAccuracy()) location.accuracy else Float.NaN
-        val accText = if (acc.isNaN()) "chưa rõ" else String.format(Locale.US, "±%.1f m", acc)
-        val isFresh = abs(System.currentTimeMillis() - location.time) <= 30_000L
-        val sats = if (isFresh) {
-            maxOf(satellitesUsedInFix, location.extras?.getInt("satellites", 0) ?: 0)
+        latestLocation = location
+        val accText = if (location.hasAccuracy()) {
+            String.format(Locale.US, "±%.1f m", location.accuracy)
         } else {
-            satellitesUsedInFix
+            "không rõ"
         }
+        val sats = location.extras?.getInt("satellites", 0)?.takeIf { it > 0 }
+            ?: satellitesUsedInFix
         val providerLabel = if (sats > 0 || location.provider == LocationManager.GPS_PROVIDER) {
             "Fused + GNSS"
         } else {
@@ -240,6 +447,7 @@ class MainActivity : MapActivity() {
         )
 
         mapLibreMap?.let { updateMapMarker(it, location, forceCenter = false) }
+        updateRescueBannerAndMarkers(latestMessages, 0)
         lookupAddressIfNeeded(location)
     }
 
