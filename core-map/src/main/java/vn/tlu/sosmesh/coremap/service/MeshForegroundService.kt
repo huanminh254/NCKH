@@ -10,6 +10,12 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import vn.tlu.sosmesh.coremap.db.MeshLogEntity
 import vn.tlu.sosmesh.coremap.db.SosMeshDatabase
 import vn.tlu.sosmesh.coremap.mesh.MeshQueueEngine
@@ -18,49 +24,57 @@ import vn.tlu.sosmesh.coremap.power.ScanProfile
 
 class MeshForegroundService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private val queueEngine = MeshQueueEngine()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var database: SosMeshDatabase
-    private var currentProfile: ScanProfile = ScanProfile.BALANCED
+    private val queueEngine = MeshQueueEngine()
+    private var currentProfile: ScanProfile =
+        BatteryScanController.selectAdaptiveProfile(100, false, false)
 
     private val scanLoopRunnable = object : Runnable {
         override fun run() {
-            performAdaptiveScanTick()
-            handler.postDelayed(this, currentProfile.scanIntervalMs)
+            serviceScope.launch {
+                performAdaptiveScanTick()
+                val batteryPct = BatteryScanController.currentBatteryPercent(applicationContext)
+                withContext(Dispatchers.Main) {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    nm?.notify(NOTIFICATION_ID, buildForegroundNotification(batteryPct))
+                    scheduleNextTick(currentProfile.scanIntervalMs)
+                }
+            }
         }
+    }
+
+    private fun scheduleNextTick(delayMs: Long) {
+        handler.removeCallbacks(scanLoopRunnable)
+        handler.postDelayed(scanLoopRunnable, delayMs)
     }
 
     override fun onCreate() {
         super.onCreate()
         database = SosMeshDatabase.getInstance(applicationContext)
-        database.getAllMessages().forEach { queueEngine.enqueueOrUpdate(it) }
         createNotificationChannel()
+        serviceScope.launch {
+            database.getOrCreateProfile(applicationContext)
+            database.messageDao().getAllMessages().forEach { queueEngine.enqueueOrUpdate(it) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val batteryPct = BatteryScanController.currentBatteryPercent(applicationContext)
-        val profile = database.getProfile()
-        val hasActiveSos = database.getAllMessages().any {
-            it.type == "SOS" && (it.status == "QUEUED" || it.status == "BROADCASTING")
-        }
-        currentProfile = BatteryScanController.selectAdaptiveProfile(
-            batteryPct = batteryPct,
-            userBatterySaverEnabled = profile.batterySaverEnabled,
-            hasActiveCriticalSos = hasActiveSos
-        )
-
         startForeground(NOTIFICATION_ID, buildForegroundNotification(batteryPct))
         handler.removeCallbacks(scanLoopRunnable)
         handler.post(scanLoopRunnable)
         return START_STICKY
     }
 
-    private fun performAdaptiveScanTick() {
+    private suspend fun performAdaptiveScanTick() {
         val now = System.currentTimeMillis()
         val batteryPct = BatteryScanController.currentBatteryPercent(applicationContext)
-        val profile = database.getProfile()
-        val allMessages = database.getAllMessages()
+        val profile = database.getOrCreateProfile(applicationContext)
+        val allMessages = database.messageDao().getAllMessages()
         allMessages.forEach { queueEngine.enqueueOrUpdate(it, now) }
         val expiredCount = queueEngine.purgeExpired(now)
+        database.messageDao().deleteExpiredMessages(now, 6 * 3600 * 1000L)
 
         val hasActiveSos = allMessages.any {
             it.type == "SOS" && (it.status == "QUEUED" || it.status == "BROADCASTING")
@@ -71,27 +85,12 @@ class MeshForegroundService : Service() {
             hasActiveCriticalSos = hasActiveSos
         )
 
-        allMessages.filter { it.status == "QUEUED" }.forEach { msg ->
-            database.updateStatus(msg.id, "BROADCASTING", now)
-            database.insertLog(
-                MeshLogEntity(
-                    packetId = msg.id,
-                    packetType = msg.type,
-                    event = "MESH_BROADCAST_TICK",
-                    hopCount = msg.hopCount,
-                    latencyMs = 120L,
-                    batteryPct = batteryPct,
-                    scanCycleMs = currentProfile.scanIntervalMs,
-                    timestamp = now
-                )
-            )
-        }
-
         if (expiredCount > 0) {
-            database.insertLog(
+            database.logDao().insertLog(
                 MeshLogEntity(
                     packetId = "TTL-CLEANUP",
                     packetType = "SYSTEM",
+                    origin = profile.userId,
                     event = "PURGED_$expiredCount",
                     hopCount = 0,
                     latencyMs = 0L,
@@ -134,6 +133,7 @@ class MeshForegroundService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(scanLoopRunnable)
+        serviceScope.cancel()
         super.onDestroy()
     }
 
