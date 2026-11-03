@@ -1,0 +1,48 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Files for the ART/Dalvik VM
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+**/build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+**/local.properties
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+.kotlin/
+*.ipr
+*.iws
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# macOS
+.DS_Store
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (local config if added later)
+google-services.json
+
+# Deliverables & temporary workflow artifacts
+drive-huan-deliverables/
+.workflow/
+docs/evidence/
