@@ -1,5 +1,6 @@
 package vn.tlu.sosmesh.coremap.mesh
 
+import vn.tlu.sosmesh.coremap.alert.AlertSignatureVerifier
 import vn.tlu.sosmesh.coremap.db.MeshMessageEntity
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -21,7 +22,7 @@ class MeshQueueEngine(
         if (nowMs - packet.createdAt > maxAgeMs) {
             return EnqueueResult.DroppedStale
         }
-        if (packet.type == "ALERT" && !verifyAlertSignature(packet.signature)) {
+        if (packet.type == "ALERT" && !AlertSignatureVerifier.verifyAlert(packet)) {
             return EnqueueResult.DroppedInvalidSignature
         }
 
@@ -29,7 +30,7 @@ class MeshQueueEngine(
             val targetId = packet.content.substringBefore("|").trim()
             val newStatus = packet.content.substringAfter("|", packet.status).trim()
             val existingTarget = queue[targetId]
-            if (existingTarget != null) {
+            if (existingTarget != null && statusRank(newStatus) > statusRank(existingTarget.status)) {
                 queue[targetId] = existingTarget.copy(status = newStatus, updatedAt = nowMs)
             }
         }
@@ -102,10 +103,8 @@ class MeshQueueEngine(
     }
 
     companion object {
-        const val OFFICIAL_SIGNATURE_PREFIX = "SIG-TLU-OFFICIAL-"
-
-        fun verifyAlertSignature(signature: String?): Boolean {
-            return !signature.isNullOrBlank() && signature.startsWith(OFFICIAL_SIGNATURE_PREFIX)
+        fun verifyAlertSignature(packet: MeshMessageEntity): Boolean {
+            return AlertSignatureVerifier.verifyAlert(packet)
         }
 
         fun typePriority(type: String): Int = when (type) {
