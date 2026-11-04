@@ -232,7 +232,7 @@ class MainActivity : MapActivity() {
                             urgencyLevel = "CRITICAL",
                             content = content,
                             signature = null,
-                            ttl = 6,
+                            ttl = MeshQueueEngine.UNLIMITED_TTL,
                             hopCount = 0,
                             status = "DELIVERED",
                             createdAt = now,

@@ -16,9 +16,6 @@ class MeshQueueEngine(
 
     @Synchronized
     fun enqueueOrUpdate(packet: MeshMessageEntity, nowMs: Long = System.currentTimeMillis()): EnqueueResult {
-        if (packet.ttl <= 0) {
-            return EnqueueResult.DroppedTtlExpired
-        }
         if (nowMs - packet.createdAt > maxAgeMs) {
             return EnqueueResult.DroppedStale
         }
@@ -66,14 +63,12 @@ class MeshQueueEngine(
 
     @Synchronized
     fun computeMissingForPeer(peerSummaryVector: Set<String>): List<MeshMessageEntity> {
-        return prioritizedQueue().filter { it.ttl > 0 && !peerSummaryVector.contains(it.id) }
+        return prioritizedQueue().filter { !peerSummaryVector.contains(it.id) }
     }
 
     @Synchronized
-    fun prepareForForward(packet: MeshMessageEntity): MeshMessageEntity? {
-        val nextTtl = packet.ttl - 1
-        if (nextTtl <= 0) return null
-        return packet.copy(ttl = nextTtl, hopCount = packet.hopCount + 1)
+    fun prepareForForward(packet: MeshMessageEntity): MeshMessageEntity {
+        return packet.copy(hopCount = packet.hopCount + 1)
     }
 
     @Synchronized
@@ -82,7 +77,7 @@ class MeshQueueEngine(
         var removed = 0
         while (iter.hasNext()) {
             val entry = iter.next().value
-            if (entry.ttl <= 0 || nowMs - entry.createdAt > maxAgeMs) {
+            if (nowMs - entry.createdAt > maxAgeMs) {
                 iter.remove()
                 removed++
             }
@@ -103,6 +98,8 @@ class MeshQueueEngine(
     }
 
     companion object {
+        const val UNLIMITED_TTL: Int = Int.MAX_VALUE
+
         fun verifyAlertSignature(packet: MeshMessageEntity): Boolean {
             return AlertSignatureVerifier.verifyAlert(packet)
         }

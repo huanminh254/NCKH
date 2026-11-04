@@ -221,7 +221,8 @@ class NearbyMeshTransport(
         val now = System.currentTimeMillis()
         val batteryPct = BatteryScanController.currentBatteryPercent(appContext)
         for (packet in missing) {
-            val payload = Payload.fromBytes(MeshPacketCodec.encodePacket(packet))
+            val outgoing = if (packet.senderId == localNodeId) packet else queueEngine.prepareForForward(packet)
+            val payload = Payload.fromBytes(MeshPacketCodec.encodePacket(outgoing))
             connectionsClient.sendPayload(endpointId, payload)
             recordPeerSeen(endpointId, summary.deviceName, summary.androidApi, deltaPackets = 1)
             if (packet.status == "QUEUED") {
@@ -234,11 +235,11 @@ class NearbyMeshTransport(
             }
             database.logDao().insertLog(
                 MeshLogEntity(
-                    packetId = packet.id,
-                    packetType = packet.type,
-                    origin = packet.senderId,
+                    packetId = outgoing.id,
+                    packetType = outgoing.type,
+                    origin = outgoing.senderId,
                     event = eventType,
-                    hopCount = packet.hopCount,
+                    hopCount = outgoing.hopCount,
                     latencyMs = (now - packet.createdAt).coerceAtLeast(0L),
                     batteryPct = batteryPct,
                     scanCycleMs = currentScanCycleMs,
@@ -324,7 +325,7 @@ class NearbyMeshTransport(
                     urgencyLevel = incoming.urgencyLevel,
                     content = "${incoming.id}|DELIVERED",
                     signature = null,
-                    ttl = 5,
+                    ttl = MeshQueueEngine.UNLIMITED_TTL,
                     hopCount = 0,
                     status = "DELIVERED",
                     createdAt = receivedAt,
@@ -335,28 +336,25 @@ class NearbyMeshTransport(
         }
 
         val forwardPacket = queueEngine.prepareForForward(acceptedPacket)
-        if (forwardPacket != null) {
-            queueEngine.enqueueOrUpdate(forwardPacket, receivedAt)
-            val otherEndpoints = connectedEndpoints.keys.filter { it != fromEndpointId }
-            if (otherEndpoints.isNotEmpty()) {
-                val payloadBytes = MeshPacketCodec.encodePacket(forwardPacket)
-                for (targetEndpoint in otherEndpoints) {
-                    connectionsClient.sendPayload(targetEndpoint, Payload.fromBytes(payloadBytes))
-                }
-                database.logDao().insertLog(
-                    MeshLogEntity(
-                        packetId = forwardPacket.id,
-                        packetType = forwardPacket.type,
-                        origin = forwardPacket.senderId,
-                        event = "FORWARDED",
-                        hopCount = forwardPacket.hopCount,
-                        latencyMs = (System.currentTimeMillis() - forwardPacket.createdAt).coerceAtLeast(0L),
-                        batteryPct = batteryPct,
-                        scanCycleMs = currentScanCycleMs,
-                        timestamp = System.currentTimeMillis()
-                    )
-                )
+        val otherEndpoints = connectedEndpoints.keys.filter { it != fromEndpointId }
+        if (otherEndpoints.isNotEmpty()) {
+            val payloadBytes = MeshPacketCodec.encodePacket(forwardPacket)
+            for (targetEndpoint in otherEndpoints) {
+                connectionsClient.sendPayload(targetEndpoint, Payload.fromBytes(payloadBytes))
             }
+            database.logDao().insertLog(
+                MeshLogEntity(
+                    packetId = forwardPacket.id,
+                    packetType = forwardPacket.type,
+                    origin = forwardPacket.senderId,
+                    event = "FORWARDED",
+                    hopCount = forwardPacket.hopCount,
+                    latencyMs = (System.currentTimeMillis() - forwardPacket.createdAt).coerceAtLeast(0L),
+                    batteryPct = batteryPct,
+                    scanCycleMs = currentScanCycleMs,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
         }
 
         database.exportLogsToCsv(appContext)

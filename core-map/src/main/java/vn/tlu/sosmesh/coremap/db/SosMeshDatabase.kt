@@ -143,7 +143,7 @@ interface MeshMessageDao {
     @Query("UPDATE messages SET status = :newStatus, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, newStatus: String, updatedAt: Long)
 
-    @Query("DELETE FROM messages WHERE ttl <= 0 OR (:nowMs - created_at) > :maxAgeMs")
+    @Query("DELETE FROM messages WHERE (:nowMs - created_at) > :maxAgeMs")
     suspend fun deleteExpiredMessages(nowMs: Long, maxAgeMs: Long): Int
 }
 

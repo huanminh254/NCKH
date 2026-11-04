@@ -130,16 +130,14 @@ class MeshQueueEngineTest {
     }
 
     @Test
-    fun `prepareForForward decrements TTL and increments hopCount until zero`() {
+    fun `prepareForForward increments hopCount without hop limit`() {
         val engine = MeshQueueEngine()
-        val hop0 = samplePacket(id = "SOS-TTL", ttl = 2, hopCount = 0)
-        val hop1 = engine.prepareForForward(hop0)
-        assertNotNull(hop1)
-        assertEquals(1, hop1!!.ttl)
-        assertEquals(1, hop1.hopCount)
-
-        val hop2 = engine.prepareForForward(hop1)
-        assertNull(hop2)
+        var current = samplePacket(id = "SOS-UNLIMITED-HOPS", ttl = MeshQueueEngine.UNLIMITED_TTL, hopCount = 0)
+        for (expectedHop in 1..25) {
+            current = engine.prepareForForward(current)
+            assertNotNull(current)
+            assertEquals(expectedHop, current.hopCount)
+        }
     }
 
     @Test
@@ -308,24 +306,21 @@ class MeshQueueEngineTest {
         // Hop 1: Node A -> Node B via summary vector diff
         val missingForB = nodeA.computeMissingForPeer(nodeB.summaryVector())
         assertEquals(1, missingForB.size)
-        val hop1Packet = nodeA.prepareForForward(missingForB.first())!!
+        val hop1Packet = nodeA.prepareForForward(missingForB.first())
         assertEquals(1, hop1Packet.hopCount)
-        assertEquals(3, hop1Packet.ttl)
         nodeB.enqueueOrUpdate(hop1Packet, t0 + 450L)
 
         // Hop 2: Node B -> Node C
         val missingForC = nodeB.computeMissingForPeer(nodeC.summaryVector())
-        val hop2Packet = nodeB.prepareForForward(missingForC.first())!!
+        val hop2Packet = nodeB.prepareForForward(missingForC.first())
         assertEquals(2, hop2Packet.hopCount)
-        assertEquals(2, hop2Packet.ttl)
         nodeC.enqueueOrUpdate(hop2Packet, t0 + 980L)
 
         // Hop 3: Node C -> Rescue Node
         val missingForRescue = nodeC.computeMissingForPeer(nodeRescue.summaryVector())
-        val hop3Packet = nodeC.prepareForForward(missingForRescue.first())!!
+        val hop3Packet = nodeC.prepareForForward(missingForRescue.first())
         val receivedAtRescue = t0 + 1_620L
         assertEquals(3, hop3Packet.hopCount)
-        assertEquals(1, hop3Packet.ttl)
         assertEquals(1_620L, receivedAtRescue - hop3Packet.createdAt)
         nodeRescue.enqueueOrUpdate(hop3Packet, receivedAtRescue)
 
@@ -340,9 +335,9 @@ class MeshQueueEngineTest {
             nowMs = receivedAtRescue + 200L
         )
         nodeRescue.enqueueOrUpdate(ackPacket, receivedAtRescue + 200L)
-        nodeC.enqueueOrUpdate(nodeRescue.prepareForForward(ackPacket)!!, receivedAtRescue + 500L)
-        nodeB.enqueueOrUpdate(nodeC.prepareForForward(nodeRescue.prepareForForward(ackPacket)!!)!!, receivedAtRescue + 800L)
-        val ackAtA = nodeB.prepareForForward(nodeC.prepareForForward(nodeRescue.prepareForForward(ackPacket)!!)!!)!!
+        nodeC.enqueueOrUpdate(nodeRescue.prepareForForward(ackPacket), receivedAtRescue + 500L)
+        nodeB.enqueueOrUpdate(nodeC.prepareForForward(nodeRescue.prepareForForward(ackPacket)), receivedAtRescue + 800L)
+        val ackAtA = nodeB.prepareForForward(nodeC.prepareForForward(nodeRescue.prepareForForward(ackPacket)))
         nodeA.enqueueOrUpdate(ackAtA, receivedAtRescue + 1_100L)
 
         val sosAtOrigin = nodeA.prioritizedQueue().first { it.id == "SOS-MULTIHOP-01" }

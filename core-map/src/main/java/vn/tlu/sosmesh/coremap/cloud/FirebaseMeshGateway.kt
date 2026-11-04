@@ -103,7 +103,7 @@ class FirebaseMeshGateway(
                         urgencyLevel = doc.getString("urgencyLevel") ?: "CRITICAL",
                         content = doc.getString("content") ?: "",
                         signature = doc.getString("signature"),
-                        ttl = (doc.getLong("ttl") ?: 5L).toInt(),
+                        ttl = (doc.getLong("ttl") ?: MeshQueueEngine.UNLIMITED_TTL.toLong()).toInt(),
                         hopCount = (doc.getLong("hops") ?: 0L).toInt(),
                         status = "DELIVERED",
                         createdAt = doc.getLong("createdAt") ?: now,
