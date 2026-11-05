@@ -13,6 +13,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
@@ -140,10 +141,22 @@ interface MeshMessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMessage(message: MeshMessageEntity)
 
-    @Query("UPDATE messages SET status = :newStatus, updated_at = :updatedAt WHERE id = :id")
+    @Transaction
+    suspend fun mergeMessage(message: MeshMessageEntity) {
+        if (getMessageById(message.id) == null) upsertMessage(message)
+        else updateStatus(message.id, message.status, message.updatedAt)
+    }
+
+    @Query("""
+        UPDATE messages SET status = :newStatus, updated_at = :updatedAt WHERE id = :id
+        AND (CASE :newStatus WHEN 'QUEUED' THEN 0 WHEN 'BROADCASTING' THEN 1
+            WHEN 'DELIVERED' THEN 2 WHEN 'APPROACHING' THEN 3 WHEN 'REACHED' THEN 4 ELSE -1 END)
+        > (CASE status WHEN 'QUEUED' THEN 0 WHEN 'BROADCASTING' THEN 1
+            WHEN 'DELIVERED' THEN 2 WHEN 'APPROACHING' THEN 3 WHEN 'REACHED' THEN 4 ELSE -1 END)
+    """)
     suspend fun updateStatus(id: String, newStatus: String, updatedAt: Long)
 
-    @Query("DELETE FROM messages WHERE (:nowMs - created_at) > :maxAgeMs")
+    @Query("DELETE FROM messages WHERE (:nowMs - created_at) >= :maxAgeMs")
     suspend fun deleteExpiredMessages(nowMs: Long, maxAgeMs: Long): Int
 }
 

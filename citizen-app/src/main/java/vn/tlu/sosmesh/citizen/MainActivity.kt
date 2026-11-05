@@ -7,6 +7,7 @@ import android.location.Location
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +31,7 @@ import vn.tlu.sosmesh.coremap.MapActivity
 import vn.tlu.sosmesh.coremap.R as CoreMapR
 import vn.tlu.sosmesh.coremap.db.MeshMessageEntity
 import vn.tlu.sosmesh.coremap.db.SosMeshDatabase
+import vn.tlu.sosmesh.coremap.mesh.SosLocationPolicy
 import vn.tlu.sosmesh.coremap.service.MeshForegroundService
 import vn.tlu.sosmesh.coremap.service.MeshPermissionHelper
 import vn.tlu.sosmesh.coremap.ui.MeshFeatureDialogs
@@ -80,8 +82,15 @@ class MainActivity : MapActivity() {
         primarySosBtn.text = "GỬI SOS MỘT CHẠM (≤ 3 THAO TÁC)"
         primarySosBtn.setOnClickListener {
             val loc = viewModel.uiState.value.location
-            val lat = loc?.latitude ?: 21.0075
-            val lon = loc?.longitude ?: 105.8248
+            if (loc == null || !SosLocationPolicy.isUsable(loc.latitude, loc.longitude,
+                    loc.accuracyMeters, loc.timestampMillis)) {
+                Toast.makeText(this, "Đang lấy vị trí mới. Hãy bật Vị trí và thử lại ở nơi thoáng.",
+                    Toast.LENGTH_LONG).show()
+                startLocationOrRequestPermission(useLastKnown = false)
+                return@setOnClickListener
+            }
+            val lat = loc.latitude
+            val lon = loc.longitude
             MeshFeatureDialogs.showOneTapSosDialog(
                 activity = this,
                 scope = lifecycleScope,
@@ -157,6 +166,7 @@ class MainActivity : MapActivity() {
     }
 
     private fun handleTriggerIntent(intent: Intent?) {
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) return
         val action = intent?.getStringExtra("trigger_action") ?: return
         intent.removeExtra("trigger_action")
         lifecycleScope.launch {
@@ -167,6 +177,8 @@ class MainActivity : MapActivity() {
             val now = System.currentTimeMillis()
             when (action) {
                 "SEND_SOS" -> {
+                    if (loc == null || !SosLocationPolicy.isUsable(loc.latitude, loc.longitude,
+                            loc.accuracyMeters, loc.timestampMillis)) return@launch
                     val sos = MeshMessageEntity(
                         id = "SOS-${profile.userId}-$now",
                         type = "SOS",
