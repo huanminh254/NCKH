@@ -127,6 +127,8 @@ class MeshForegroundService : Service() {
             scanCycleMs = currentProfile.scanIntervalMs
         )
 
+        nearbyTransport.exchangeSummaries()
+
         firebaseGateway.syncIfOnline(nearbyTransport, currentProfile.scanIntervalMs)
 
         if (expiredCount > 0) {

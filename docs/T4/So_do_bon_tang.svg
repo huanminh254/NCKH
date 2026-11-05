@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg
+  PUBLIC '-//W3C//DTD SVG 1.0//EN'
+  'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>
+<svg width="470" height="206" preserveAspectRatio="xMinYMin meet" viewBox="0 0 470 206" xmlns="http://www.w3.org/2000/svg" version="1.0" fill-rule="evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<title>...</title>
+	<desc>...</desc>
+	<clipPath id="clip">
+		<rect x="0" y="0" width="470" height="206"/>
+	</clipPath>
+	<g id="group" transform="scale(1,-1) translate(0,-206)" style="clip-path: url(#clip)">
+		<g transform="">
+			<rect x="12" y="163" width="442" height="37" style="stroke: rgb(72%,77%,80%); stroke-linecap: butt; stroke-width: 0.7; fill: rgb(94%,95%,96%); fill-rule: evenodd;"/>
+			<text x="25" y="186" style="font-family: Arial-Bold; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,372) scale(1,-1)">Trình bày</text>
+			<text x="25" y="172" style="font-family: Arial; font-size: 9.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,344) scale(1,-1)">Activity, ViewModel, luồng dữ liệu UI</text>
+			<rect x="12" y="118" width="442" height="37" style="stroke: rgb(72%,77%,80%); stroke-linecap: butt; stroke-width: 0.7; fill: rgb(94%,95%,96%); fill-rule: evenodd;"/>
+			<text x="25" y="141" style="font-family: Arial-Bold; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,282) scale(1,-1)">Nghiệp vụ</text>
+			<text x="25" y="127" style="font-family: Arial; font-size: 9.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,254) scale(1,-1)">Queue, chống lặp, trạng thái, vị trí</text>
+			<rect x="12" y="73" width="442" height="37" style="stroke: rgb(72%,77%,80%); stroke-linecap: butt; stroke-width: 0.7; fill: rgb(94%,95%,96%); fill-rule: evenodd;"/>
+			<text x="25" y="96" style="font-family: Arial-Bold; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,192) scale(1,-1)">Dữ liệu</text>
+			<text x="25" y="82" style="font-family: Arial; font-size: 9.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,164) scale(1,-1)">Room, bản đồ offline, log, gateway</text>
+			<rect x="12" y="28" width="442" height="37" style="stroke: rgb(72%,77%,80%); stroke-linecap: butt; stroke-width: 0.7; fill: rgb(94%,95%,96%); fill-rule: evenodd;"/>
+			<text x="25" y="51" style="font-family: Arial-Bold; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,102) scale(1,-1)">Kết nối</text>
+			<text x="25" y="37" style="font-family: Arial; font-size: 9.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,74) scale(1,-1)">Nearby, quyền, foreground service</text>
+		</g>
+	</g>
+</svg>

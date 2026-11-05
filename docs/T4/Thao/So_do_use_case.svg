@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg
+  PUBLIC '-//W3C//DTD SVG 1.0//EN'
+  'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>
+<svg width="470" height="300" preserveAspectRatio="xMinYMin meet" viewBox="0 0 470 300" xmlns="http://www.w3.org/2000/svg" version="1.0" fill-rule="evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<title>...</title>
+	<desc>...</desc>
+	<clipPath id="clip">
+		<rect x="0" y="0" width="470" height="300"/>
+	</clipPath>
+	<g id="group" transform="scale(1,-1) translate(0,-300)" style="clip-path: url(#clip)">
+		<g transform="">
+			<rect x="68" y="16" width="334" height="270" style="stroke: rgb(54%,60%,63%); stroke-linecap: butt; stroke-width: 0.8; fill: none; fill-rule: evenodd;"/>
+			<text x="207.798095703125" y="272" style="font-family: Arial-Bold; font-size: 11px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,544) scale(1,-1)">SOS Mesh</text>
+			<circle cx="28" cy="255" r="5" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1; fill: none; fill-rule: evenodd;"/>
+			<path d="M 28,250 L 28,234 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 20,244 L 36,244 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 28,234 L 21,223 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 28,234 L 35,223 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<text x="7.7191162109375" y="210" style="font-family: Arial; font-size: 8.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,420) scale(1,-1)">Người dân</text>
+			<circle cx="442" cy="255" r="5" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1; fill: none; fill-rule: evenodd;"/>
+			<path d="M 442,250 L 442,234 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 434,244 L 450,244 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 442,234 L 435,223 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 442,234 L 449,223 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<text x="427.81396484375" y="210" style="font-family: Arial; font-size: 8.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,420) scale(1,-1)">Cứu hộ</text>
+			<circle cx="28" cy="95" r="5" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1; fill: none; fill-rule: evenodd;"/>
+			<path d="M 28,90 L 28,74 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 20,84 L 36,84 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 28,74 L 21,63 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 28,74 L 35,63 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<text x="17.13427734375" y="50" style="font-family: Arial; font-size: 8.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,100) scale(1,-1)">Relay</text>
+			<circle cx="442" cy="95" r="5" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1; fill: none; fill-rule: evenodd;"/>
+			<path d="M 442,90 L 442,74 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 434,84 L 450,84 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 442,74 L 435,63 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<path d="M 442,74 L 449,63 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 0.8;"/>
+			<text x="426.406982421875" y="50" style="font-family: Arial; font-size: 8.5px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,100) scale(1,-1)">Kỹ thuật</text>
+			<ellipse cx="156.0" cy="232.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="124.97900390625" y="229" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,458) scale(1,-1)">UC01 Gửi SOS</text>
+			<ellipse cx="312.0" cy="232.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="280.23193359375" y="229" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,458) scale(1,-1)">UC03 Điều phối</text>
+			<ellipse cx="156.0" cy="148.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="119.228759765625" y="145" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,290) scale(1,-1)">UC02 Chuyển tiếp</text>
+			<ellipse cx="312.0" cy="148.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="281.486572265625" y="145" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,290) scale(1,-1)">UC05 Gateway</text>
+			<ellipse cx="156.0" cy="64.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="123.728759765625" y="61" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,122) scale(1,-1)">UC04 Cảnh báo</text>
+			<ellipse cx="312.0" cy="64.0" rx="66.0" ry="22.0" style="stroke: rgb(49%,58%,61%); stroke-linecap: butt; stroke-width: 0.8; fill: rgb(95%,96%,96%); fill-rule: evenodd;"/>
+			<text x="282.732421875" y="61" style="font-family: Arial; font-size: 9px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,122) scale(1,-1)">UC06 Xuất log</text>
+			<path d="M 37,238 L 90,232 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+			<path d="M 433,238 L 378,232 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+			<path d="M 37,78 L 90,148 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+			<path d="M 37,78 L 90,64 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+			<path d="M 433,238 L 378,148 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+			<path d="M 433,78 L 378,64 Z" style="stroke: rgb(31%,40%,43%); stroke-linecap: butt; stroke-width: 0.7;"/>
+		</g>
+	</g>
+</svg>

@@ -9,30 +9,34 @@ import kotlin.math.sqrt
 
 class MeshQueueEngine(
     private val maxQueueSize: Int = 200,
-    private val maxAgeMs: Long = 6 * 3600 * 1000L
+    private val maxAgeMs: Long = 6 * 3600 * 1000L,
+    private val maxSeenPackets: Int = maxQueueSize * 10
 ) {
-    private val seenPacketIds = LinkedHashSet<String>()
+    private val seenPacketIds = LinkedHashMap<String, Long>()
     private val queue = LinkedHashMap<String, MeshMessageEntity>()
+
+    init {
+        require(maxQueueSize > 0 && maxAgeMs > 0 && maxSeenPackets >= maxQueueSize)
+    }
 
     @Synchronized
     fun enqueueOrUpdate(packet: MeshMessageEntity, nowMs: Long = System.currentTimeMillis()): EnqueueResult {
-        if (nowMs - packet.createdAt > maxAgeMs) {
+        if (nowMs - packet.createdAt >= maxAgeMs) {
             return EnqueueResult.DroppedStale
         }
+        if (packet.ttl < 0 || packet.hopCount < 0 || packet.id.isBlank() ||
+            packet.type !in setOf("SOS", "ALERT", "ACK_STATUS", "CHAT") ||
+            packet.status !in STATUSES || packet.createdAt > nowMs + 5 * 60_000L
+        ) return EnqueueResult.DroppedInvalidPacket
         if (packet.type == "ALERT" && !AlertSignatureVerifier.verifyAlert(packet)) {
             return EnqueueResult.DroppedInvalidSignature
         }
 
-        if (packet.type == "ACK_STATUS") {
-            val targetId = packet.content.substringBefore("|").trim()
-            val newStatus = packet.content.substringAfter("|", packet.status).trim()
-            val existingTarget = queue[targetId]
-            if (existingTarget != null && statusRank(newStatus) > statusRank(existingTarget.status)) {
-                queue[targetId] = existingTarget.copy(status = newStatus, updatedAt = nowMs)
-            }
+        if (packet.type == "ACK_STATUS" && parseAck(packet) == null) {
+            return EnqueueResult.DroppedInvalidPacket
         }
 
-        if (seenPacketIds.contains(packet.id)) {
+        if (seenPacketIds.containsKey(packet.id)) {
             val existing = queue[packet.id]
             if (existing != null && statusRank(packet.status) > statusRank(existing.status)) {
                 queue[packet.id] = existing.copy(status = packet.status, updatedAt = nowMs)
@@ -41,10 +45,30 @@ class MeshQueueEngine(
             return EnqueueResult.DuplicateDropped
         }
 
-        seenPacketIds.add(packet.id)
-        queue[packet.id] = packet
+        seenPacketIds[packet.id] = packet.createdAt
+        // An ACK may arrive before its SOS during store-carry-forward.
+        val pendingStatus = if (packet.type == "SOS") queue.values
+            .filter { it.type == "ACK_STATUS" }
+            .mapNotNull(::parseAck)
+            .filter { it.first == packet.id }
+            .map { it.second }
+            .maxByOrNull(::statusRank) else null
+        val accepted = if (pendingStatus != null && statusRank(pendingStatus) > statusRank(packet.status)) {
+            packet.copy(status = pendingStatus, updatedAt = nowMs)
+        } else packet
+        queue[packet.id] = accepted
+        parseAck(packet)?.let { (targetId, newStatus) ->
+            val target = queue[targetId]
+            if (target?.type == "SOS" && statusRank(newStatus) > statusRank(target.status)) {
+                queue[targetId] = target.copy(status = newStatus, updatedAt = nowMs)
+            }
+        }
         trimIfNeeded()
-        return EnqueueResult.Enqueued(packet)
+        while (seenPacketIds.size > maxSeenPackets) {
+            val removable = seenPacketIds.keys.firstOrNull { !queue.containsKey(it) } ?: break
+            seenPacketIds.remove(removable)
+        }
+        return EnqueueResult.Enqueued(accepted)
     }
 
     @Synchronized
@@ -59,16 +83,29 @@ class MeshQueueEngine(
     }
 
     @Synchronized
-    fun summaryVector(): Set<String> = LinkedHashSet(seenPacketIds)
+    fun summaryVector(): Set<String> = LinkedHashSet(queue.keys)
 
     @Synchronized
-    fun computeMissingForPeer(peerSummaryVector: Set<String>): List<MeshMessageEntity> {
-        return prioritizedQueue().filter { !peerSummaryVector.contains(it.id) }
+    fun summaryStatusRanks(): Map<String, Int> = queue.mapValues { statusRank(it.value.status) }
+
+    @Synchronized
+    fun computeMissingForPeer(
+        peerSummaryVector: Set<String>,
+        peerStatusRanks: Map<String, Int> = emptyMap()
+    ): List<MeshMessageEntity> {
+        return prioritizedQueue().filter {
+            it.ttl > 0 && (!peerSummaryVector.contains(it.id) ||
+                (peerStatusRanks[it.id]?.let { rank -> rank < statusRank(it.status) } == true))
+        }
     }
 
     @Synchronized
     fun prepareForForward(packet: MeshMessageEntity): MeshMessageEntity {
-        return packet.copy(hopCount = packet.hopCount + 1)
+        require(packet.ttl > 0 && packet.hopCount < Int.MAX_VALUE)
+        return packet.copy(
+            ttl = if (packet.ttl == UNLIMITED_TTL) UNLIMITED_TTL else packet.ttl - 1,
+            hopCount = packet.hopCount + 1
+        )
     }
 
     @Synchronized
@@ -77,16 +114,20 @@ class MeshQueueEngine(
         var removed = 0
         while (iter.hasNext()) {
             val entry = iter.next().value
-            if (nowMs - entry.createdAt > maxAgeMs) {
+            if (nowMs - entry.createdAt >= maxAgeMs) {
                 iter.remove()
                 removed++
             }
         }
+        seenPacketIds.entries.removeAll { nowMs - it.value >= maxAgeMs }
         return removed
     }
 
     @Synchronized
     fun size(): Int = queue.size
+
+    @Synchronized
+    fun seenCount(): Int = seenPacketIds.size
 
     private fun trimIfNeeded() {
         if (queue.size <= maxQueueSize) return
@@ -99,6 +140,17 @@ class MeshQueueEngine(
 
     companion object {
         const val UNLIMITED_TTL: Int = Int.MAX_VALUE
+        val STATUSES = setOf("QUEUED", "BROADCASTING", "DELIVERED", "APPROACHING", "REACHED")
+
+        fun parseAck(packet: MeshMessageEntity): Pair<String, String>? {
+            if (packet.type != "ACK_STATUS") return null
+            val parts = packet.content.split('|')
+            if (parts.size != 2 || parts[0].isBlank() ||
+                parts[1] !in setOf("DELIVERED", "APPROACHING", "REACHED") ||
+                packet.status != parts[1]
+            ) return null
+            return parts[0] to parts[1]
+        }
 
         fun verifyAlertSignature(packet: MeshMessageEntity): Boolean {
             return AlertSignatureVerifier.verifyAlert(packet)
@@ -148,4 +200,5 @@ sealed interface EnqueueResult {
     data object DroppedTtlExpired : EnqueueResult
     data object DroppedStale : EnqueueResult
     data object DroppedInvalidSignature : EnqueueResult
+    data object DroppedInvalidPacket : EnqueueResult
 }

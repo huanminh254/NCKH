@@ -374,4 +374,153 @@ class MeshQueueEngineTest {
         assertEquals(1, purged)
         assertEquals(listOf("SOS-FRESH"), engine.prioritizedQueue().map { it.id })
     }
+
+    @Test
+    fun `finite TTL counts every link and leaf retains SOS without forwarding`() {
+        val a = MeshQueueEngine()
+        val b = MeshQueueEngine()
+        val c = MeshQueueEngine()
+        val packet = samplePacket("FINITE", ttl = 2)
+        a.enqueueOrUpdate(packet, 1_000_000L)
+        val hop1 = a.prepareForForward(packet)
+        assertEquals(1, hop1.ttl)
+        b.enqueueOrUpdate(hop1, 1_000_001L)
+        val hop2 = b.prepareForForward(hop1)
+        assertEquals(0, hop2.ttl)
+        assertEquals(2, hop2.hopCount)
+        assertTrue(c.enqueueOrUpdate(hop2, 1_000_002L) is EnqueueResult.Enqueued)
+        assertEquals(1, c.size())
+        assertTrue(c.computeMissingForPeer(emptySet()).isEmpty())
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { c.prepareForForward(hop2) }
+    }
+
+    @Test
+    fun `seen cache stays bounded while queue retains urgent packets`() {
+        val engine = MeshQueueEngine(maxQueueSize = 2, maxSeenPackets = 4)
+        engine.enqueueOrUpdate(samplePacket("URGENT", urgency = "CRITICAL"), 1_000_000L)
+        for (i in 1..100) engine.enqueueOrUpdate(samplePacket("CHAT-$i", type = "CHAT"), 1_000_000L)
+        assertEquals(2, engine.size())
+        assertTrue(engine.seenCount() <= 4)
+        assertTrue(engine.summaryVector().contains("URGENT"))
+        assertEquals(engine.prioritizedQueue().map { it.id }.toSet(), engine.summaryVector())
+    }
+
+    @Test
+    fun `expired tombstones are purged with messages at exact age boundary`() {
+        val engine = MeshQueueEngine(maxAgeMs = 1000L)
+        engine.enqueueOrUpdate(samplePacket("OLD", createdAt = 1000L), 1000L)
+        assertEquals(1, engine.purgeExpired(2000L))
+        assertEquals(0, engine.seenCount())
+        assertTrue(engine.summaryVector().isEmpty())
+        assertEquals(EnqueueResult.DroppedStale,
+            engine.enqueueOrUpdate(samplePacket("OLD", createdAt = 1000L), 2000L))
+    }
+
+    @Test
+    fun `summary versions send higher status for ID peer already has`() {
+        val sender = MeshQueueEngine()
+        val receiver = MeshQueueEngine()
+        val packet = samplePacket("SAME-ID")
+        sender.enqueueOrUpdate(packet.copy(status = "REACHED"), 1_000_000L)
+        receiver.enqueueOrUpdate(packet, 1_000_000L)
+        val missing = sender.computeMissingForPeer(receiver.summaryVector(), receiver.summaryStatusRanks())
+        assertEquals(listOf("SAME-ID"), missing.map { it.id })
+        receiver.enqueueOrUpdate(sender.prepareForForward(missing.single()), 1_000_001L)
+        assertEquals("REACHED", receiver.prioritizedQueue().single().status)
+        assertTrue(sender.computeMissingForPeer(receiver.summaryVector(), receiver.summaryStatusRanks()).isEmpty())
+    }
+
+    @Test
+    fun `delayed ACK does not regress reached and malformed ACK is rejected`() {
+        val engine = MeshQueueEngine()
+        engine.enqueueOrUpdate(samplePacket("SOS", status = "REACHED"), 1_000_000L)
+        val ack = samplePacket("ACK", type = "ACK_STATUS", status = "DELIVERED")
+            .copy(content = "SOS|DELIVERED")
+        engine.enqueueOrUpdate(ack, 1_000_001L)
+        assertEquals("REACHED", engine.prioritizedQueue().first { it.id == "SOS" }.status)
+        assertEquals(EnqueueResult.DroppedInvalidPacket,
+            engine.enqueueOrUpdate(ack.copy(id = "INVALID", content = "SOS|INVALID"), 1_000_002L))
+    }
+
+    @Test
+    fun `ACK arriving before SOS upgrades later SOS`() {
+        val engine = MeshQueueEngine()
+        engine.enqueueOrUpdate(samplePacket("ACK", type = "ACK_STATUS", status = "APPROACHING")
+            .copy(content = "SOS-LATE|APPROACHING"), 1_000_000L)
+        val result = engine.enqueueOrUpdate(samplePacket("SOS-LATE"), 1_000_001L)
+        assertEquals("APPROACHING", (result as EnqueueResult.Enqueued).packet.status)
+    }
+
+    @Test
+    fun `store carry restart resumes pending SOS and received status`() {
+        val firstSession = MeshQueueEngine()
+        val p = samplePacket("PERSISTED", status = "DELIVERED")
+        firstSession.enqueueOrUpdate(p, 1_000_000L)
+        val persisted = firstSession.prioritizedQueue()
+        val restarted = MeshQueueEngine()
+        persisted.forEach { restarted.enqueueOrUpdate(it, 1_000_100L) }
+        val rescue = MeshQueueEngine()
+        val outgoing = restarted.computeMissingForPeer(rescue.summaryVector()).single()
+        rescue.enqueueOrUpdate(restarted.prepareForForward(outgoing), 1_000_200L)
+        assertEquals("DELIVERED", rescue.prioritizedQueue().single().status)
+    }
+
+    @Test
+    fun `five node disconnected contacts deliver SOS and reverse ACK`() {
+        val nodes = List(5) { MeshQueueEngine() }
+        val t0 = 1_000_000L
+        nodes[0].enqueueOrUpdate(samplePacket("FIVE-NODES", ttl = MeshQueueEngine.UNLIMITED_TTL), t0)
+        for (i in 0..3) {
+            val missing = nodes[i].computeMissingForPeer(nodes[i + 1].summaryVector())
+            nodes[i + 1].enqueueOrUpdate(nodes[i].prepareForForward(missing.single()), t0 + (i + 1) * 100L)
+        }
+        assertEquals(4, nodes[4].prioritizedQueue().single().hopCount)
+        val ack = samplePacket("ACK-5", type = "ACK_STATUS", status = "REACHED",
+            ttl = MeshQueueEngine.UNLIMITED_TTL).copy(content = "FIVE-NODES|REACHED")
+        nodes[4].enqueueOrUpdate(ack, t0 + 500L)
+        var forwarded = ack
+        for (i in 4 downTo 1) {
+            forwarded = nodes[i].prepareForForward(forwarded)
+            nodes[i - 1].enqueueOrUpdate(forwarded, t0 + (10 - i) * 100L)
+        }
+        assertEquals("REACHED", nodes[0].prioritizedQueue().first { it.id == "FIVE-NODES" }.status)
+    }
+
+    @Test
+    fun `invalid routing values and future timestamps are rejected`() {
+        val engine = MeshQueueEngine()
+        for (p in listOf(samplePacket("NEG-TTL", ttl = -1), samplePacket("NEG-HOPS", hopCount = -1),
+            samplePacket("BAD-STATE", status = "UNKNOWN"), samplePacket("FUTURE", createdAt = 2_000_000L))) {
+            assertEquals(EnqueueResult.DroppedInvalidPacket, engine.enqueueOrUpdate(p, 1_000_000L))
+        }
+        assertEquals(0, engine.size())
+    }
+
+    @Test
+    fun `codec rejects unknown and oversized frames and keeps summary versions`() {
+        assertNull(MeshPacketCodec.decodeFrame("{\"frameType\":\"UNKNOWN\"}".toByteArray()))
+        assertNull(MeshPacketCodec.decodeFrame(ByteArray(MeshPacketCodec.MAX_FRAME_BYTES + 1)))
+        assertNull(MeshPacketCodec.decodeFrame("broken JSON".toByteArray()))
+        val bytes = MeshPacketCodec.encodeSummaryVector("A", "Node A", 35, setOf("SOS"), mapOf("SOS" to 4))
+        val decoded = MeshPacketCodec.decodeFrame(bytes) as DecodedMeshFrame.SummaryVector
+        assertEquals(mapOf("SOS" to 4), decoded.statusRanks)
+    }
+
+    @Test
+    fun `legacy summary with no status map remains decodable`() {
+        val bytes = """{"frameType":"SUMMARY_VECTOR","nodeId":"OLD","packetIds":["SOS"]}""".toByteArray()
+        val decoded = MeshPacketCodec.decodeFrame(bytes) as DecodedMeshFrame.SummaryVector
+        assertEquals(setOf("SOS"), decoded.packetIds)
+        assertTrue(decoded.statusRanks.isEmpty())
+    }
+
+    @Test
+    fun `SOS location requires valid recent coordinates and declared accuracy`() {
+        assertTrue(SosLocationPolicy.isUsable(21.0, 105.0, 30f, 1_000L, 2_000L))
+        assertFalse(SosLocationPolicy.isUsable(Double.NaN, 105.0, 30f, 1_000L, 2_000L))
+        assertFalse(SosLocationPolicy.isUsable(91.0, 105.0, 30f, 1_000L, 2_000L))
+        assertFalse(SosLocationPolicy.isUsable(21.0, 105.0, 150f, 1_000L, 2_000L))
+        assertFalse(SosLocationPolicy.isUsable(21.0, 105.0, 30f, 1_000L, 122_000L))
+        assertFalse(SosLocationPolicy.isUsable(21.0, 105.0, 30f, 3_000L, 2_000L))
+    }
 }

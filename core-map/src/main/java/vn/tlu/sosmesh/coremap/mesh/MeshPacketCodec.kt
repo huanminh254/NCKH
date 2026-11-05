@@ -7,12 +7,14 @@ import vn.tlu.sosmesh.coremap.db.MeshMessageEntity
 object MeshPacketCodec {
     const val FRAME_SUMMARY_VECTOR = "SUMMARY_VECTOR"
     const val FRAME_PACKET = "PACKET"
+    const val MAX_FRAME_BYTES = 32_768
 
     fun encodeSummaryVector(
         nodeId: String,
         deviceName: String,
         androidApi: Int,
-        packetIds: Set<String>
+        packetIds: Set<String>,
+        statusRanks: Map<String, Int> = emptyMap()
     ): ByteArray {
         val json = JSONObject().apply {
             put("frameType", FRAME_SUMMARY_VECTOR)
@@ -20,6 +22,7 @@ object MeshPacketCodec {
             put("deviceName", deviceName)
             put("androidApi", androidApi)
             put("packetIds", JSONArray(packetIds.toList()))
+            put("statusRanks", JSONObject(statusRanks))
         }
         return json.toString().toByteArray(Charsets.UTF_8)
     }
@@ -50,6 +53,7 @@ object MeshPacketCodec {
     }
 
     fun decodeFrame(bytes: ByteArray): DecodedMeshFrame? {
+        if (bytes.isEmpty() || bytes.size > MAX_FRAME_BYTES) return null
         return runCatching {
             val text = bytes.toString(Charsets.UTF_8)
             val json = JSONObject(text)
@@ -57,6 +61,7 @@ object MeshPacketCodec {
                 FRAME_SUMMARY_VECTOR -> {
                     val arr = json.optJSONArray("packetIds") ?: JSONArray()
                     val ids = LinkedHashSet<String>(arr.length())
+                    if (arr.length() > 2000) return null
                     for (i in 0 until arr.length()) {
                         val id = arr.optString(i)
                         if (id.isNotBlank()) ids.add(id)
@@ -65,11 +70,14 @@ object MeshPacketCodec {
                         nodeId = json.optString("nodeId", "UNKNOWN"),
                         deviceName = json.optString("deviceName", "Nearby Peer"),
                         androidApi = json.optInt("androidApi", 26),
-                        packetIds = ids
+                        packetIds = ids,
+                        statusRanks = json.optJSONObject("statusRanks")?.let { ranks ->
+                            ids.associateWith { ranks.optInt(it, -1) }.filterValues { it in 0..4 }
+                        }.orEmpty()
                     )
                 }
 
-                else -> {
+                FRAME_PACKET -> {
                     val id = json.getString("id")
                     val type = json.getString("type")
                     val origin = json.optString("origin", json.optString("senderId", "UNKNOWN"))
@@ -96,6 +104,7 @@ object MeshPacketCodec {
                     )
                     DecodedMeshFrame.Packet(entity)
                 }
+                else -> null
             }
         }.getOrNull()
     }
@@ -106,7 +115,8 @@ sealed interface DecodedMeshFrame {
         val nodeId: String,
         val deviceName: String,
         val androidApi: Int,
-        val packetIds: Set<String>
+        val packetIds: Set<String>,
+        val statusRanks: Map<String, Int> = emptyMap()
     ) : DecodedMeshFrame
 
     data class Packet(val message: MeshMessageEntity) : DecodedMeshFrame

@@ -41,6 +41,13 @@ class NearbyMeshTransport(
     private val discoveredNames = ConcurrentHashMap<String, String>()
     private val connectedEndpoints = ConcurrentHashMap<String, String>()
     private val exchangedCounts = ConcurrentHashMap<String, Int>()
+    private data class PendingTransfer(
+        val endpointId: String,
+        val packet: MeshMessageEntity,
+        val event: String
+    )
+    private val pendingTransfers = ConcurrentHashMap<Long, PendingTransfer>()
+    private val inFlightPackets = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     private var localNodeId: String = "NODE-LOCAL"
@@ -88,6 +95,8 @@ class NearbyMeshTransport(
         isDiscovering = false
         isAdvertising = false
         connectedEndpoints.clear()
+        pendingTransfers.clear()
+        inFlightPackets.clear()
     }
 
     private fun startAdvertisingIfNeeded() {
@@ -166,7 +175,7 @@ class NearbyMeshTransport(
                     recordPeerSeen(
                         endpointId = endpointId,
                         deviceName = name,
-                        androidApi = Build.VERSION.SDK_INT,
+                        androidApi = 0,
                         deltaPackets = 0
                     )
                     sendSummaryVectorToPeer(endpointId)
@@ -178,6 +187,10 @@ class NearbyMeshTransport(
 
         override fun onDisconnected(endpointId: String) {
             connectedEndpoints.remove(endpointId)
+            pendingTransfers.entries.filter { it.value.endpointId == endpointId }.forEach {
+                pendingTransfers.remove(it.key)
+                inFlightPackets.remove(transferKey(it.value))
+            }
         }
     }
 
@@ -193,7 +206,55 @@ class NearbyMeshTransport(
             }
         }
 
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) return
+            val pending = pendingTransfers.remove(update.payloadId) ?: return
+            inFlightPackets.remove(transferKey(pending))
+            scope.launch {
+                val success = update.status == PayloadTransferUpdate.Status.SUCCESS
+                recordTransfer(pending, success)
+            }
+        }
+    }
+
+    private fun transferKey(transfer: PendingTransfer): String =
+        "${transfer.endpointId}|${transfer.packet.id}|${transfer.packet.status}"
+
+    private fun sendPacketToPeer(endpointId: String, packet: MeshMessageEntity, event: String) {
+        val pending = PendingTransfer(endpointId, packet, event)
+        if (!inFlightPackets.add(transferKey(pending))) return
+        val payload = Payload.fromBytes(MeshPacketCodec.encodePacket(packet))
+        pendingTransfers[payload.id] = pending
+        connectionsClient.sendPayload(endpointId, payload).addOnFailureListener {
+            if (pendingTransfers.remove(payload.id) != null) {
+                inFlightPackets.remove(transferKey(pending))
+                scope.launch { recordTransfer(pending, false) }
+            }
+        }
+    }
+
+    private suspend fun recordTransfer(transfer: PendingTransfer, success: Boolean) {
+        val now = System.currentTimeMillis()
+        val packet = transfer.packet
+        if (success) {
+            recordPeerSeen(transfer.endpointId,
+                connectedEndpoints[transfer.endpointId] ?: transfer.endpointId, 0, 1)
+            if (packet.status == "QUEUED") {
+                database.messageDao().updateStatus(packet.id, "BROADCASTING", now)
+                queueEngine.enqueueOrUpdate(packet.copy(status = "BROADCASTING"), now)
+            }
+        }
+        database.logDao().insertLog(MeshLogEntity(
+            packetId = packet.id, packetType = packet.type, origin = packet.senderId,
+            event = if (success) transfer.event else "SEND_FAILED", hopCount = packet.hopCount,
+            latencyMs = (now - packet.createdAt).coerceAtLeast(0L),
+            batteryPct = BatteryScanController.currentBatteryPercent(appContext),
+            scanCycleMs = currentScanCycleMs, timestamp = now
+        ))
+    }
+
+    suspend fun exchangeSummaries() {
+        for (endpointId in connectedEndpoints.keys.toList()) sendSummaryVectorToPeer(endpointId)
     }
 
     private suspend fun sendSummaryVectorToPeer(endpointId: String) {
@@ -202,7 +263,8 @@ class NearbyMeshTransport(
             nodeId = profile.userId,
             deviceName = profile.displayName,
             androidApi = Build.VERSION.SDK_INT,
-            packetIds = queueEngine.summaryVector()
+            packetIds = queueEngine.summaryVector(),
+            statusRanks = queueEngine.summaryStatusRanks()
         )
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(summaryBytes))
     }
@@ -217,35 +279,15 @@ class NearbyMeshTransport(
             androidApi = summary.androidApi,
             deltaPackets = 0
         )
-        val missing = queueEngine.computeMissingForPeer(summary.packetIds)
-        val now = System.currentTimeMillis()
-        val batteryPct = BatteryScanController.currentBatteryPercent(appContext)
+        val missing = queueEngine.computeMissingForPeer(summary.packetIds, summary.statusRanks)
         for (packet in missing) {
-            val outgoing = if (packet.senderId == localNodeId) packet else queueEngine.prepareForForward(packet)
-            val payload = Payload.fromBytes(MeshPacketCodec.encodePacket(outgoing))
-            connectionsClient.sendPayload(endpointId, payload)
-            recordPeerSeen(endpointId, summary.deviceName, summary.androidApi, deltaPackets = 1)
-            if (packet.status == "QUEUED") {
-                database.messageDao().updateStatus(packet.id, "BROADCASTING", now)
-            }
+            val outgoing = queueEngine.prepareForForward(packet)
             val eventType = when {
                 packet.type == "ACK_STATUS" -> "ACK"
                 packet.senderId == localNodeId -> "SENT"
                 else -> "FORWARDED"
             }
-            database.logDao().insertLog(
-                MeshLogEntity(
-                    packetId = outgoing.id,
-                    packetType = outgoing.type,
-                    origin = outgoing.senderId,
-                    event = eventType,
-                    hopCount = outgoing.hopCount,
-                    latencyMs = (now - packet.createdAt).coerceAtLeast(0L),
-                    batteryPct = batteryPct,
-                    scanCycleMs = currentScanCycleMs,
-                    timestamp = now
-                )
-            )
+            sendPacketToPeer(endpointId, outgoing, eventType)
         }
         if (missing.isNotEmpty()) {
             database.exportLogsToCsv(appContext)
@@ -257,7 +299,7 @@ class NearbyMeshTransport(
         val realLatencyMs = (receivedAt - incoming.createdAt).coerceAtLeast(0L)
         val batteryPct = BatteryScanController.currentBatteryPercent(appContext)
         val peerLabel = connectedEndpoints[fromEndpointId] ?: discoveredNames[fromEndpointId] ?: fromEndpointId
-        recordPeerSeen(fromEndpointId, peerLabel, Build.VERSION.SDK_INT, deltaPackets = 1)
+        recordPeerSeen(fromEndpointId, peerLabel, 0, deltaPackets = 1)
 
         val result = queueEngine.enqueueOrUpdate(incoming, receivedAt)
         val acceptedPacket = when (result) {
@@ -266,11 +308,10 @@ class NearbyMeshTransport(
             else -> null
         } ?: return
 
-        database.messageDao().upsertMessage(acceptedPacket)
+        database.messageDao().mergeMessage(acceptedPacket)
 
         if (incoming.type == "ACK_STATUS") {
-            val targetId = incoming.content.substringBefore("|").trim()
-            val newStatus = incoming.content.substringAfter("|", incoming.status).trim()
+            val (targetId, newStatus) = MeshQueueEngine.parseAck(incoming) ?: return
             if (targetId.isNotBlank()) {
                 database.messageDao().updateStatus(targetId, newStatus, receivedAt)
             }
@@ -313,6 +354,7 @@ class NearbyMeshTransport(
                 MeshQueueEngine.statusRank(incoming.status) < MeshQueueEngine.statusRank("DELIVERED")
             ) {
                 database.messageDao().updateStatus(incoming.id, "DELIVERED", receivedAt)
+                queueEngine.enqueueOrUpdate(acceptedPacket.copy(status = "DELIVERED"), receivedAt)
                 val deliveredAck = MeshMessageEntity(
                     id = "ACK-${incoming.id}-DELIVERED-${profile.userId}",
                     type = "ACK_STATUS",
@@ -335,26 +377,13 @@ class NearbyMeshTransport(
             }
         }
 
+        if (acceptedPacket.ttl == 0) return
         val forwardPacket = queueEngine.prepareForForward(acceptedPacket)
         val otherEndpoints = connectedEndpoints.keys.filter { it != fromEndpointId }
         if (otherEndpoints.isNotEmpty()) {
-            val payloadBytes = MeshPacketCodec.encodePacket(forwardPacket)
             for (targetEndpoint in otherEndpoints) {
-                connectionsClient.sendPayload(targetEndpoint, Payload.fromBytes(payloadBytes))
+                sendPacketToPeer(targetEndpoint, forwardPacket, "FORWARDED")
             }
-            database.logDao().insertLog(
-                MeshLogEntity(
-                    packetId = forwardPacket.id,
-                    packetType = forwardPacket.type,
-                    origin = forwardPacket.senderId,
-                    event = "FORWARDED",
-                    hopCount = forwardPacket.hopCount,
-                    latencyMs = (System.currentTimeMillis() - forwardPacket.createdAt).coerceAtLeast(0L),
-                    batteryPct = batteryPct,
-                    scanCycleMs = currentScanCycleMs,
-                    timestamp = System.currentTimeMillis()
-                )
-            )
         }
 
         database.exportLogsToCsv(appContext)
@@ -363,18 +392,23 @@ class NearbyMeshTransport(
     suspend fun broadcastPacketNow(packet: MeshMessageEntity) {
         val now = System.currentTimeMillis()
         val batteryPct = BatteryScanController.currentBatteryPercent(appContext)
-        queueEngine.enqueueOrUpdate(packet, now)
-        database.messageDao().upsertMessage(packet)
+        val result = queueEngine.enqueueOrUpdate(packet, now)
+        val accepted = when (result) {
+            is EnqueueResult.Enqueued -> result.packet
+            is EnqueueResult.UpdatedStatus -> result.packet
+            EnqueueResult.DuplicateDropped -> database.messageDao().getMessageById(packet.id)
+            else -> null
+        } ?: return
+        database.messageDao().mergeMessage(accepted)
 
         if (packet.type == "ACK_STATUS") {
-            val targetId = packet.content.substringBefore("|").trim()
-            val newStatus = packet.content.substringAfter("|", packet.status).trim()
+            val (targetId, newStatus) = MeshQueueEngine.parseAck(accepted) ?: return
             if (targetId.isNotBlank()) {
                 database.messageDao().updateStatus(targetId, newStatus, now)
             }
         }
 
-        val eventName = if (packet.type == "ACK_STATUS") "ACK" else "SENT"
+        val eventName = "QUEUED"
         database.logDao().insertLog(
             MeshLogEntity(
                 packetId = packet.id,
@@ -390,13 +424,10 @@ class NearbyMeshTransport(
         )
 
         val endpoints = connectedEndpoints.keys.toList()
-        if (endpoints.isNotEmpty()) {
-            val payloadBytes = MeshPacketCodec.encodePacket(packet)
+        if (endpoints.isNotEmpty() && accepted.ttl > 0) {
+            val outgoing = queueEngine.prepareForForward(accepted)
             for (ep in endpoints) {
-                connectionsClient.sendPayload(ep, Payload.fromBytes(payloadBytes))
-            }
-            if (packet.status == "QUEUED") {
-                database.messageDao().updateStatus(packet.id, "BROADCASTING", now)
+                sendPacketToPeer(ep, outgoing, if (packet.type == "ACK_STATUS") "ACK" else "SENT")
             }
         }
         database.exportLogsToCsv(appContext)
@@ -412,14 +443,15 @@ class NearbyMeshTransport(
             (prev ?: 0) + deltaPackets
         } ?: deltaPackets
         val cleanName = deviceName.substringAfter("|", deviceName)
+        val previousPeer = database.peerDao().getPeerById(endpointId)
         database.peerDao().upsertPeer(
             EncounteredPeerEntity(
                 endpointId = endpointId,
                 deviceName = cleanName,
-                androidApi = androidApi,
-                supportsBle = true,
-                supportsWifiDirect = true,
-                lastRssi = -55,
+                androidApi = if (androidApi > 0) androidApi else previousPeer?.androidApi ?: 0,
+                supportsBle = previousPeer?.supportsBle ?: false,
+                supportsWifiDirect = previousPeer?.supportsWifiDirect ?: false,
+                lastRssi = 0, // Nearby does not expose RSSI; zero means not measured.
                 exchangedPackets = totalExchanged,
                 lastSeenAt = System.currentTimeMillis()
             )
